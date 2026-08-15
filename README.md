@@ -1,6 +1,6 @@
 # Trae Local API
 
-将 Trae IDE 变成本地 OpenAI/Anthropic 兼容 API 服务，让 Claude Code、Cursor、Cline 等第三方工具直接调用 Trae 底层模型。
+将 Trae 账号能力变成本地 OpenAI/Anthropic 兼容 API 服务，让 Claude Code、Cursor、Cline 等第三方工具直接调用 Trae Agent v3 后端。
 
 支持四个 Trae 版本:Trea CN、TRAE SOLO CN、Trae SG(国际版)、TRAE SOLO(国际版)。
 
@@ -9,9 +9,10 @@
 - 自动解密四版本认证数据(CN/SOLO/SOLO-SG 使用 tc 加密,SG 使用明文 JSON)
 - 提供 OpenAI (`/v1/chat/completions`) 和 Anthropic (`/v1/messages`) 兼容接口
 - Token 过期自动刷新，自动保存到 `.env`
-- Claude 模型名自动映射到 Trae 内部模型
+- Claude/OpenAI 模型名自动映射到 Trae 模型配置
 - 支持流式输出
-- 3 级 API 端点回退
+- 直接调用 Trae Agent v3 后端，不操作 IDE 窗口或剪贴板
+- 校验服务端实际采用的模型配置，避免静默路由到其他模型
 - 完整支持 Claude Code 工具调用(tool_use content block)
 - 自适应 CN/SG 两种 SSE 事件格式(CN 带 `event:output` 前缀,SG 大部分 data 行无 event 前缀)
 
@@ -27,18 +28,14 @@ npm install
 
 在 `.env` 中设置 `TRAE_EDITION`(不设置默认 `cn`):
 
-| 值 | 对应 IDE | storage.json 路径 | 加密格式 | 上游端点 |
-|----|----------|-------------------|----------|----------|
-| `cn` | Trae CN 国内版 | Windows: `%APPDATA%\Trae CN\User`; Linux: `~/.config/Trae CN/User` | tc 加密 | `trae-api-cn.mchost.guru` |
-| `solo` | TRAE SOLO CN 独立部署版 | Windows: `%APPDATA%\TRAE SOLO CN\User`; Linux: `~/.config/TRAE SOLO CN/User` | tc 加密 | `trae-api-cn.mchost.guru` |
-| `sg` | Trae 国际版 | Windows: `%APPDATA%\Trae\User`; Linux: `~/.config/Trae/User` | 明文 JSON | `a0ai-api-sg.byteintlapi.com` |
-| `solo-sg` | TRAE SOLO 国际版 | Windows: `%APPDATA%\TRAE SOLO\User`; Linux: `~/.config/TRAE SOLO/User` | tc 加密 | `a0ai-api-sg.byteintlapi.com` |
+| 值 | 对应 IDE | storage.json 路径 | 加密格式 |
+|----|----------|-------------------|----------|
+| `cn` | Trae CN 国内版 | Windows: `%APPDATA%\Trae CN\User`; Linux: `~/.config/Trae CN/User` | tc 加密 |
+| `solo` | TRAE SOLO CN 独立部署版 | Windows: `%APPDATA%\TRAE SOLO CN\User`; Linux: `~/.config/TRAE SOLO CN/User` | tc 加密 |
+| `sg` | Trae 国际版 | Windows: `%APPDATA%\Trae\User`; Linux: `~/.config/Trae/User` | 明文 JSON |
+| `solo-sg` | TRAE SOLO 国际版 | Windows: `%APPDATA%\TRAE SOLO\User`; Linux: `~/.config/TRAE SOLO/User` | tc 加密 |
 
-> **CN 与 SG 差异**:
-> - CN/SOLO 与 SG/SOLO-SG 分别走国内/国际上游端点
-> - SG 版 `storage.json` 中认证字段为明文 JSON,其他三版均为 `tc` 加密
-> - SSE 事件格式:CN 每条 `data:` 前都有 `event:output`;SG 大部分 `data:` 行无 `event:` 前缀(本项目已自动适配)
-> - SOLO CN 与 CN 共用 chat API 端点,SOLO SG 与 SG 共用 chat API 端点,仅认证文件路径不同
+> SG 版 `storage.json` 中认证字段为明文 JSON，其他三版均为 `tc` 加密。
 
 ### 3. 一键启动
 
@@ -101,7 +98,7 @@ npm run setup
 | POST | `/v1/chat/completions` | OpenAI 格式对话 |
 | POST | `/v1/messages` | Anthropic 格式对话 |
 
-## 模型选择现状
+## 模型选择
 
 `GET /v1/models` 会从 Trae 账号的实时配置接口读取 IDE 中可见的模型，而不是返回写死列表。当前账号中的关键配置名包括:
 
@@ -111,21 +108,12 @@ npm run setup
 | DeepSeek-V4-Pro | `deepseek-V4-Pro` | `deepseek-V4-Pro__dev` |
 | DeepSeek-V4-Flash | `DeepSeek-V4-Flash` | `DeepSeek-V4-Flash__dev` |
 
-注意:本项目使用的 `/api/agent/v3/llm_utils_chat` 是旧的轻量对话接口。实测该接口不会可靠采用请求体中的 `model`,而会按 `function`/默认策略路由;当前默认落到 Kimi K2.6。Trae IDE 的精确选模则发生在有会话历史和提示词配置的 Agent v3 任务协议中。
+本项目直接调用 `/api/agent/v3/create_agent_task`，请求时使用 Trae 界面对应的精确配置名。服务会检查返回的 `model_config.config_name` 是否与请求一致；不一致时直接报错，不会把降级后的响应伪装成目标模型。
 
-Linux 桌面环境下,`DeepSeek-V4-Flash-Official` 会通过已经打开的 Trae CN IDE 窗口调用,从而保留 IDE 的精确模型选择。该路径:
-
-- 只复用现有 Trae 窗口,不会启动第二个 IDE。
-- 需要安装 `xdotool` 和 `xclip`,并保持 Trae 窗口已登录且选择 `DeepSeek-V4-Flash 正式版`。
-- 请求会串行执行,期间会短暂激活 Trae 窗口并使用系统剪贴板。
-- 服务进程需要可访问桌面会话,例如设置 `DISPLAY=:0` 和正确的 `XAUTHORITY`。
-
-除 `DeepSeek-V4-Flash-Official` 外,默认情况下代理仅允许已验证的 `kimi-k2.6`/`auto`;其他模型会返回明确的 400 错误,避免把 Kimi 响应误报成 Pro、Flash 或 GLM。`/v1/models` 中:
+`/v1/models` 中:
 
 - `selectable_in_ide: true`:该账号可在 Trae IDE 中选择。
-- `selectable_via_legacy_api: true`:已验证可通过本项目当前传输路径调用。
-
-可设置 `ALLOW_UNVERIFIED_MODEL_ROUTING=true` 恢复旧版透传行为,但这不代表上游实际使用了请求的模型。
+- `selectable_via_agent_api: true`:可通过 Agent v3 直连路径调用。
 
 ## 环境变量
 
@@ -140,17 +128,16 @@ Linux 桌面环境下,`DeepSeek-V4-Flash-Official` 会通过已经打开的 Trae
 | `PORT` | 监听端口 | 9220 |
 | `HOST` | 监听地址 | 127.0.0.1 |
 | `TRAE_DATA_DIR` | Trae `User` 配置目录，覆盖自动探测 | (自动探测) |
-| `TRAE_UI_DISPLAY` | 精确模型 UI 桥接使用的 X11 display | `DISPLAY` 或 `:0` |
-| `TRAE_UI_WINDOW_TITLE` | 用于查找已打开 Trae 窗口的标题 | `TraeCode CN` |
-| `TRAE_UI_TIMEOUT_MS` | 等待 Trae 完成单次请求的超时毫秒数 | 900000 |
-| `ALLOW_UNVERIFIED_MODEL_ROUTING` | 允许旧接口接受未验证模型名(可能仍路由到 Kimi) | false |
+| `TRAE_AGENT_API_URL` | Agent v3 后端地址 | `https://console.enterprise.trae.cn/api/agent/v3/create_agent_task` |
+| `TRAE_DEVICE_ID` | 覆盖自动读取的 Trae 设备 ID | (自动读取) |
+| `TRAE_MACHINE_ID` | 覆盖自动生成的稳定机器 ID | (自动生成) |
+| `MAX_CONTEXT_TOKENS` | 发送前的上下文截断阈值 | 90000 |
 
 ## 前置条件
 
 - Node.js >= 18
 - 已安装并登录任一 Trae IDE:Trea CN / TRAE SOLO CN / Trae(国际版) / TRAE SOLO(国际版)
 - 对应 IDE 的用户配置目录下存在 `globalStorage/storage.json`
-- Linux 上通过 Trae CN 精确调用 `DeepSeek-V4-Flash-Official` 时需要 X11、`xdotool` 和 `xclip`
 
 ## 项目结构
 
@@ -162,8 +149,8 @@ trae-local-api/
 │   ├── server.js          # Express 服务器
 │   ├── auth.js            # 认证管理
 │   ├── trae-decrypt.js    # tc 加密解密
-│   ├── trae-client.js     # Trae API 客户端
-│   ├── trae-ui-bridge.js  # 复用现有 Trae 窗口进行精确选模
+│   ├── trae-client.js     # 模型目录与路由
+│   ├── trae-agent-client.js # Agent v3 直连客户端
 │   ├── openai-format.js   # OpenAI 格式转换
 │   └── anthropic-format.js # Anthropic 格式转换
 └── .env                   # 自动生成的配置

@@ -56,21 +56,6 @@ const API_KEY = process.env.API_KEY || '';
 const EDITION = (process.env.TRAE_EDITION || 'cn').toLowerCase();
 const MANUAL_TOKEN = process.env.TRAE_MANUAL_TOKEN || '';
 
-// BASE_URL 选择:
-//   cn       → Trae CN 国内版 chat API 端点
-//   solo     → TRAE SOLO CN 国内独立部署版(共用 CN 端点)
-//   sg       → Trae 国际版 chat API 端点
-//   solo-sg  → TRAE SOLO 国际独立部署版(共用 SG 端点)
-// 加密格式:cn/solo/solo-sg 使用 tc 加密;sg 使用 plaintext JSON
-// chat API:cn/solo 共用 mchost.guru;sg/solo-sg 共用 byteintlapi.com
-const DEFAULT_BASE_URLS = {
-  cn: 'https://trae-api-cn.mchost.guru',
-  solo: 'https://trae-api-cn.mchost.guru',
-  sg: 'https://a0ai-api-sg.byteintlapi.com',
-  'solo-sg': 'https://a0ai-api-sg.byteintlapi.com',
-};
-const BASE_URL = process.env.BASE_URL || DEFAULT_BASE_URLS[EDITION] || DEFAULT_BASE_URLS.cn;
-
 // Auth middleware
 function requireAuth(req, res, next) {
   if (!API_KEY) return next();
@@ -99,7 +84,9 @@ app.get('/v1/status', requireAuth, (req, res) => {
   res.json({
     status: 'ok',
     edition: EDITION,
-    base_url: BASE_URL,
+    transport: 'direct-agent-v3',
+    agent_api_url: process.env.TRAE_AGENT_API_URL
+      || 'https://console.enterprise.trae.cn/api/agent/v3/create_agent_task',
     has_token: !!auth.getToken(),
     port: PORT,
   });
@@ -108,7 +95,7 @@ app.get('/v1/status', requireAuth, (req, res) => {
 // Models
 app.get('/v1/models', requireAuth, async (req, res) => {
   try {
-    const models = await traeClient.getModels(BASE_URL);
+    const models = await traeClient.getModels();
     res.json({ object: 'list', data: models });
   } catch (err) {
     return sendAnthropicError(res, 500, 'api_error', err.message);
@@ -405,7 +392,7 @@ app.post('/v1/chat/completions', requireAuth, async (req, res) => {
 
   try {
     const { response: fetchResp, model: usedModel } = await traeClient.sendChatRequest(
-      converted, model, stream, BASE_URL, { maxTokens: max_tokens }
+      converted, model, stream, { maxTokens: max_tokens }
     );
 
     // Patch: tag the response with an estimated prompt token count so
@@ -542,7 +529,7 @@ app.post('/v1/messages', requireAuth, async (req, res) => {
 
   try {
     const { response: fetchResp, model: usedModel } = await traeClient.sendChatRequest(
-      converted, model, stream, BASE_URL, { maxTokens: max_tokens }
+      converted, model, stream, { maxTokens: max_tokens }
     );
 
     if (stream) {
@@ -589,7 +576,7 @@ function start() {
   app.listen(PORT, HOST, () => {
     console.log(`[server] Running on http://${HOST}:${PORT}`);
     console.log(`[server] Edition: ${EDITION.toUpperCase()}`);
-    console.log(`[server] Base URL: ${BASE_URL}`);
+    console.log('[server] Transport: direct Trae Agent v3 API');
     console.log(`[server] API Key: ${API_KEY ? '***' : '(not set - open access)'}`);
     console.log('');
     console.log('Endpoints:');
