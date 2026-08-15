@@ -169,20 +169,31 @@ function decryptAuthData(dataDir) {
   return JSON.parse(decrypted);
 }
 
+function getAppDataDir() {
+  if (process.platform === 'win32') {
+    return process.env.APPDATA || path.join(process.env.HOME || '', 'AppData', 'Roaming');
+  }
+  return process.env.XDG_CONFIG_HOME || path.join(process.env.HOME || '', '.config');
+}
+
+function getTraeDataDir(appName) {
+  // This is the full path to Trae's User directory, not the config root.
+  if (process.env.TRAE_DATA_DIR) return path.resolve(process.env.TRAE_DATA_DIR);
+  return path.join(getAppDataDir(), appName, 'User');
+}
+
 /**
  * Get Trae CN data directory path
  */
 function getTraeCNDataDir() {
-  const appData = process.env.APPDATA || path.join(process.env.HOME, 'AppData', 'Roaming');
-  return path.join(appData, 'Trae CN', 'User');
+  return getTraeDataDir('Trae CN');
 }
 
 /**
  * Get Trae SG data directory path
  */
 function getTraeSGDataDir() {
-  const appData = process.env.APPDATA || path.join(process.env.HOME, 'AppData', 'Roaming');
-  return path.join(appData, 'Trae', 'User');
+  return getTraeDataDir('Trae');
 }
 
 /**
@@ -191,8 +202,7 @@ function getTraeSGDataDir() {
  * 仅 storage.json 存储路径不同(目录名为 "TRAE SOLO CN")
  */
 function getTraeSoloCNDataDir() {
-  const appData = process.env.APPDATA || path.join(process.env.HOME, 'AppData', 'Roaming');
-  return path.join(appData, 'TRAE SOLO CN', 'User');
+  return getTraeDataDir('TRAE SOLO CN');
 }
 
 /**
@@ -201,13 +211,13 @@ function getTraeSoloCNDataDir() {
  * 但 chat API 端点与 Trae SG 相同(https://a0ai-api-sg.byteintlapi.com)
  */
 function getTraeSoloSGDataDir() {
-  const appData = process.env.APPDATA || path.join(process.env.HOME, 'AppData', 'Roaming');
-  return path.join(appData, 'TRAE SOLO', 'User');
+  return getTraeDataDir('TRAE SOLO');
 }
 
 module.exports = {
   decryptStorageValue,
   decryptAuthData,
+  getAppDataDir,
   getTraeCNDataDir,
   getTraeSGDataDir,
   getTraeSoloCNDataDir,

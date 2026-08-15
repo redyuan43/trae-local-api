@@ -29,10 +29,10 @@ npm install
 
 | 值 | 对应 IDE | storage.json 路径 | 加密格式 | 上游端点 |
 |----|----------|-------------------|----------|----------|
-| `cn` | Trae CN 国内版 | `%APPDATA%\Trae CN\User\globalStorage\storage.json` | tc 加密 | `trae-api-cn.mchost.guru` |
-| `solo` | TRAE SOLO CN 独立部署版 | `%APPDATA%\TRAE SOLO CN\User\globalStorage\storage.json` | tc 加密 | `trae-api-cn.mchost.guru` |
-| `sg` | Trae 国际版 | `%APPDATA%\Trae\User\globalStorage\storage.json` | 明文 JSON | `a0ai-api-sg.byteintlapi.com` |
-| `solo-sg` | TRAE SOLO 国际版 | `%APPDATA%\TRAE SOLO\User\globalStorage\storage.json` | tc 加密 | `a0ai-api-sg.byteintlapi.com` |
+| `cn` | Trae CN 国内版 | Windows: `%APPDATA%\Trae CN\User`; Linux: `~/.config/Trae CN/User` | tc 加密 | `trae-api-cn.mchost.guru` |
+| `solo` | TRAE SOLO CN 独立部署版 | Windows: `%APPDATA%\TRAE SOLO CN\User`; Linux: `~/.config/TRAE SOLO CN/User` | tc 加密 | `trae-api-cn.mchost.guru` |
+| `sg` | Trae 国际版 | Windows: `%APPDATA%\Trae\User`; Linux: `~/.config/Trae/User` | 明文 JSON | `a0ai-api-sg.byteintlapi.com` |
+| `solo-sg` | TRAE SOLO 国际版 | Windows: `%APPDATA%\TRAE SOLO\User`; Linux: `~/.config/TRAE SOLO/User` | tc 加密 | `a0ai-api-sg.byteintlapi.com` |
 
 > **CN 与 SG 差异**:
 > - CN/SOLO 与 SG/SOLO-SG 分别走国内/国际上游端点
@@ -101,16 +101,24 @@ npm run setup
 | POST | `/v1/chat/completions` | OpenAI 格式对话 |
 | POST | `/v1/messages` | Anthropic 格式对话 |
 
-## 模型映射
+## 模型选择现状
 
-| 请求模型 | 映射到 | 档位 |
-|----------|--------|------|
-| claude-opus-4-7/4-6/4-5 | glm-5.2 | T1 |
-| claude-sonnet-4-6/4-5/4 | glm-5.2 | T1 |
-| claude-3.5/3.7-sonnet | glm-5.2 | T1 |
-| claude-haiku-4-5 | glm-5.1 | T2 |
-| gpt-4o | DeepSeek-V4-Pro | T2 |
-| auto | glm-5.2 | T1 |
+`GET /v1/models` 会从 Trae 账号的实时配置接口读取 IDE 中可见的模型，而不是返回写死列表。当前账号中的关键配置名包括:
+
+| IDE 显示名 | 请求时的精确配置名 | Dev 内部配置 |
+|------------|--------------------|--------------|
+| DeepSeek-V4-Flash 正式版 | `DeepSeek-V4-Flash-Official` | `deepseek_v4_flash_official__dev` |
+| DeepSeek-V4-Pro | `deepseek-V4-Pro` | `deepseek-V4-Pro__dev` |
+| DeepSeek-V4-Flash | `DeepSeek-V4-Flash` | `DeepSeek-V4-Flash__dev` |
+
+注意:本项目当前使用的 `/api/agent/v3/llm_utils_chat` 是旧的轻量对话接口。实测该接口不会可靠采用请求体中的 `model`,而会按 `function`/默认策略路由;当前默认落到 Kimi K2.6。Trae IDE 的精确选模则发生在有会话历史和提示词配置的 Agent v3 任务协议中。
+
+因此默认情况下,代理仅允许已验证的 `kimi-k2.6`/`auto`,其他模型会返回明确的 400 错误,避免把 Kimi 响应误报成 Pro、Flash 或 GLM。`/v1/models` 中:
+
+- `selectable_in_ide: true`:该账号可在 Trae IDE 中选择。
+- `selectable_via_legacy_api: true`:已验证可通过本项目当前传输路径调用。
+
+可设置 `ALLOW_UNVERIFIED_MODEL_ROUTING=true` 恢复旧版透传行为,但这不代表上游实际使用了请求的模型。
 
 ## 环境变量
 
@@ -121,14 +129,17 @@ npm run setup
 | `TRAE_REFRESH_TOKEN` | 刷新用 Token | (自动生成) |
 | `TRAE_USER_ID` | 用户 ID | (自动生成) |
 | `TRAE_API_HOST` | Token 刷新服务地址(随版本自动设置) | (自动生成) |
-| `API_KEY` | 本服务的 API Key | trae-local-api |
+| `API_KEY` | 本服务的 API Key | 首次配置时自动生成 |
 | `PORT` | 监听端口 | 9220 |
+| `HOST` | 监听地址 | 127.0.0.1 |
+| `TRAE_DATA_DIR` | Trae `User` 配置目录，覆盖自动探测 | (自动探测) |
+| `ALLOW_UNVERIFIED_MODEL_ROUTING` | 允许旧接口接受未验证模型名(可能仍路由到 Kimi) | false |
 
 ## 前置条件
 
 - Node.js >= 18
 - 已安装并登录任一 Trae IDE:Trea CN / TRAE SOLO CN / Trae(国际版) / TRAE SOLO(国际版)
-- 对应 IDE 的 `%APPDATA%` 目录下存在 `globalStorage/storage.json`
+- 对应 IDE 的用户配置目录下存在 `globalStorage/storage.json`
 
 ## 项目结构
 
