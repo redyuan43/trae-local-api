@@ -51,6 +51,7 @@ function sendAnthropicError(res, httpStatus, errorType, message) {
 }
 
 const PORT = parseInt(process.env.PORT || '9220', 10);
+const HOST = process.env.HOST || '127.0.0.1';
 const API_KEY = process.env.API_KEY || '';
 const EDITION = (process.env.TRAE_EDITION || 'cn').toLowerCase();
 const MANUAL_TOKEN = process.env.TRAE_MANUAL_TOKEN || '';
@@ -585,8 +586,8 @@ function start() {
     process.exit(1);
   }
 
-  app.listen(PORT, () => {
-    console.log(`[server] Running on http://localhost:${PORT}`);
+  app.listen(PORT, HOST, () => {
+    console.log(`[server] Running on http://${HOST}:${PORT}`);
     console.log(`[server] Edition: ${EDITION.toUpperCase()}`);
     console.log(`[server] Base URL: ${BASE_URL}`);
     console.log(`[server] API Key: ${API_KEY ? '***' : '(not set - open access)'}`);

@@ -14,6 +14,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const {
   decryptAuthData,
   getTraeCNDataDir,
@@ -101,7 +102,12 @@ const existingPort = process.env.PORT
   || '9220';
 const existingApiKey = process.env.API_KEY
   || readEnvValue(ENV_PATH, 'API_KEY')
-  || 'trae-local-api';
+  || crypto.randomBytes(32).toString('base64url');
+const existingHost = process.env.HOST
+  || readEnvValue(ENV_PATH, 'HOST')
+  || '127.0.0.1';
+const existingDataDir = process.env.TRAE_DATA_DIR
+  || readEnvValue(ENV_PATH, 'TRAE_DATA_DIR');
 
 // Build .env content
 const envContent = [
@@ -124,11 +130,14 @@ const envContent = [
   '# Server config',
   `API_KEY=${existingApiKey}`,
   `PORT=${existingPort}`,
+  `HOST=${existingHost}`,
+  ...(existingDataDir ? [`TRAE_DATA_DIR=${existingDataDir}`] : []),
   '',
 ].join('\n');
 
 // Write .env
 fs.writeFileSync(ENV_PATH, envContent, 'utf8');
+fs.chmodSync(ENV_PATH, 0o600);
 
 console.log('');
 console.log('=== Setup Complete ===');
@@ -137,11 +146,12 @@ console.log(`Edition:        ${edition.toUpperCase()}`);
 console.log(`UserID:         ${authData.userId}`);
 console.log(`Username:       ${authData.account?.username || 'N/A'}`);
 console.log(`Region:         ${authData.userRegion?.region || 'N/A'}`);
-console.log(`Token:          ${authData.token ? authData.token.substring(0, 40) + '...' : 'N/A'}`);
+console.log(`Token:          ${authData.token ? 'loaded' : 'N/A'}`);
 console.log(`Token Expiry:   ${authData.expiredAt || 'N/A'}`);
 console.log(`Refresh Expiry: ${authData.refreshExpiredAt || 'N/A'}`);
 console.log(`API Host:       ${apiHost}`);
 console.log(`Port:           ${existingPort}`);
+console.log(`Host:           ${existingHost}`);
 console.log('');
 console.log(`Saved to: ${ENV_PATH}`);
 console.log('');

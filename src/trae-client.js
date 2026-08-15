@@ -1,21 +1,24 @@
 /**
  * trae-client.js - Trae API client
  *
- * Communicates with Trae backend API with 3-level endpoint fallback:
- * 1. /api/agent/v3/llm_utils_chat (primary - lightweight chat)
- * 2. /api/ide/v1/chat (fallback 1 - standard chat)
- * 3. /api/agent/v3/create_agent_task (fallback 2 - full agent)
+ * The legacy lightweight endpoint is OpenAI-compatible enough for basic chat,
+ * but it does not reliably honor the request's model field. Trae IDE model
+ * selection is resolved by the stateful Agent v3 task protocol.
  */
 
 const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
 const auth = require('./auth');
 
-const DEFAULT_BASE_URL_CN = 'https://trae-api-cn.mchost.guru';
-const DEFAULT_BASE_URL_SG = 'https://a0ai-api-sg.byteintlapi.com';
+const IDE_VERSION_CN = '3.3.87';
+const IDE_VERSION_CODE_CN = '20260806';
+const MODEL_CATALOG_URL = process.env.TRAE_MODEL_CATALOG_URL
+  || 'https://console.enterprise.trae.cn/api/ide/v1/batch_get_detail_param';
+const MODEL_CATALOG_TTL_MS = 5 * 60 * 1000;
+const VERIFIED_LEGACY_MODEL = 'kimi-k2.6';
 
-const IDE_VERSION_CN = '3.3.67';
-const IDE_VERSION_CODE_CN = '20260401';
+let modelCatalogCache = null;
+let modelCatalogCachedAt = 0;
 
 // Model name mapping: external name -> Trae internal name
 const MODEL_MAP = {
@@ -33,17 +36,17 @@ const MODEL_MAP = {
   'mimo-v2.5-pro': 'glm-5.2',
   'mimo-v2.5': 'glm-5.2',
   // GPT -> DeepSeek
-  'gpt-4o': 'DeepSeek-V4-Pro',
+  'gpt-4o': 'deepseek-V4-Pro',
   'gpt-4o-mini': 'DeepSeek-V4-Flash',
-  'gpt-4.1': 'DeepSeek-V4-Pro',
-  // Auto -> GLM-5.2
-  'auto': 'glm-5.2',
+  'gpt-4.1': 'deepseek-V4-Pro',
+  // The legacy endpoint currently resolves its default route to Kimi K2.6.
+  'auto': VERIFIED_LEGACY_MODEL,
 };
 
 // Model tiers for fallback
 const MODEL_TIERS = {
   T1: ['glm-5.2'],
-  T2: ['glm-5.1', 'qwen-3.7-plus', 'kimi-k2.6', 'DeepSeek-V4-Pro'],
+  T2: ['glm-5.1', 'qwen-3.7-plus', 'kimi-k2.6', 'deepseek-V4-Pro'],
   T3: ['glm-5', 'qwen-3.6-plus', 'minimax-m3', 'DeepSeek-V4-Flash'],
   T4: ['glm-4.7', 'kimi-k2', 'qwen3-coder', 'minimax-m2.7'],
   T5: ['glm-4.6', 'minimax-m2.1'],
@@ -76,10 +79,13 @@ function buildHeaders(token, userId) {
     'x-device-id': hashDeviceId(machineId),
     'x-machine-id': machineId,
     'x-request-id': requestId,
+    'x-app-version': 'default',
+    'x-app-version-code': IDE_VERSION_CODE_CN,
     'x-ide-version': IDE_VERSION_CN,
     'x-ide-version-code': IDE_VERSION_CODE_CN,
-    'x-device-type': 'windows',
-    'x-os-version': 'Windows 10',
+    'x-ide-version-type': 'stable',
+    'x-device-type': process.platform,
+    'x-os-version': process.platform,
     'Content-Type': 'application/json',
     'Accept': 'text/event-stream',
   };
@@ -241,6 +247,19 @@ async function sendChatRequest(messages, model, stream, baseUrl, options) {
   }
 
   const traeModel = mapModel(model);
+
+  if (traeModel !== VERIFIED_LEGACY_MODEL
+      && process.env.ALLOW_UNVERIFIED_MODEL_ROUTING !== 'true') {
+    const err = new Error(
+      `Trae legacy chat endpoint cannot reliably select "${traeModel}". `
+      + `It currently routes requests to ${VERIFIED_LEGACY_MODEL} regardless of the model field. `
+      + 'Use the Trae IDE Agent protocol for exact model selection, or set '
+      + 'ALLOW_UNVERIFIED_MODEL_ROUTING=true only for compatibility testing.'
+    );
+    err.status = 400;
+    throw err;
+  }
+
   const body = buildChatBody(messages, traeModel, stream, options);
   const headers = buildHeaders(auth.getToken(), userId);
 
@@ -295,30 +314,87 @@ async function sendChatRequest(messages, model, stream, baseUrl, options) {
 }
 
 /**
- * Get available models from Trae
+ * Fetch the model configurations currently enabled for this Trae account.
  */
-async function getModels(baseUrl) {
-  const token = auth.getToken();
-  const userId = auth.getUserId();
-  const headers = buildHeaders(token, userId);
-
-  // Return a static list based on known models
-  const allModels = [];
-  for (const [tier, models] of Object.entries(MODEL_TIERS)) {
-    for (const m of models) {
-      if (!allModels.find(x => x.id === m)) {
-        allModels.push({
-          id: m,
-          object: 'model',
-          created: Math.floor(Date.now() / 1000),
-          owned_by: 'trae',
-          tier: tier,
-        });
-      }
-    }
+async function fetchModelCatalog() {
+  if (modelCatalogCache && Date.now() - modelCatalogCachedAt < MODEL_CATALOG_TTL_MS) {
+    return modelCatalogCache;
   }
 
-  return allModels;
+  const token = auth.getToken();
+  const userId = auth.getUserId();
+  if (!token) {
+    const err = new Error('No auth token available');
+    err.status = 401;
+    throw err;
+  }
+
+  const headers = buildHeaders(token, userId);
+  headers.Accept = 'application/json';
+
+  const resp = await fetch(MODEL_CATALOG_URL, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      functions: ['chat_v3', 'builder_v3'],
+      agent_type: 'dev_agent',
+      current_config_info: { config_name: '', is_custom_model: false },
+      mode_type: 0,
+      access_type: 0,
+      ab_force_vids: '',
+      ab_autotest_advanced_mode: 0,
+      show_custom_model: true,
+    }),
+  });
+
+  if (!resp.ok) {
+    const text = await resp.text();
+    const err = new Error(`Trae model catalog returned ${resp.status}: ${text.substring(0, 500)}`);
+    err.status = resp.status;
+    throw err;
+  }
+
+  modelCatalogCache = await resp.json();
+  modelCatalogCachedAt = Date.now();
+  return modelCatalogCache;
+}
+
+/**
+ * Get available models from Trae.
+ *
+ * These entries describe what the IDE account can select. Only entries marked
+ * selectable_via_legacy_api are verified to work through this proxy's current
+ * lightweight chat transport.
+ */
+async function getModels() {
+  const catalog = await fetchModelCatalog();
+  const chatConfig = (catalog.function_configs || [])
+    .find(item => item.function === 'chat_v3');
+  const configs = chatConfig ? chatConfig.config_info_list || [] : [];
+  const created = Math.floor(Date.now() / 1000);
+
+  return configs
+    .filter(config => config.config_switch !== false)
+    .map(config => {
+      const details = config.model_detail_list || [];
+      const dev = details.find(detail => detail.model_name.endsWith('__dev')) || details[0];
+      const max = details.find(detail => detail.model_name.endsWith('__max'));
+
+      return {
+        id: config.config_name,
+        object: 'model',
+        created,
+        owned_by: 'trae',
+        display_name: config.display_config?.display_name || config.config_name,
+        config_source: config.config_source,
+        internal_model: dev?.model_name || null,
+        max_internal_model: max?.model_name || null,
+        context_window: dev?.prompt_max_tokens || null,
+        max_output_tokens: dev?.max_tokens || null,
+        selectable_in_ide: true,
+        selectable_via_legacy_api: config.config_name === VERIFIED_LEGACY_MODEL,
+      };
+    });
 }
 
 module.exports = {
