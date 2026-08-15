@@ -111,9 +111,16 @@ npm run setup
 | DeepSeek-V4-Pro | `deepseek-V4-Pro` | `deepseek-V4-Pro__dev` |
 | DeepSeek-V4-Flash | `DeepSeek-V4-Flash` | `DeepSeek-V4-Flash__dev` |
 
-注意:本项目当前使用的 `/api/agent/v3/llm_utils_chat` 是旧的轻量对话接口。实测该接口不会可靠采用请求体中的 `model`,而会按 `function`/默认策略路由;当前默认落到 Kimi K2.6。Trae IDE 的精确选模则发生在有会话历史和提示词配置的 Agent v3 任务协议中。
+注意:本项目使用的 `/api/agent/v3/llm_utils_chat` 是旧的轻量对话接口。实测该接口不会可靠采用请求体中的 `model`,而会按 `function`/默认策略路由;当前默认落到 Kimi K2.6。Trae IDE 的精确选模则发生在有会话历史和提示词配置的 Agent v3 任务协议中。
 
-因此默认情况下,代理仅允许已验证的 `kimi-k2.6`/`auto`,其他模型会返回明确的 400 错误,避免把 Kimi 响应误报成 Pro、Flash 或 GLM。`/v1/models` 中:
+Linux 桌面环境下,`DeepSeek-V4-Flash-Official` 会通过已经打开的 Trae CN IDE 窗口调用,从而保留 IDE 的精确模型选择。该路径:
+
+- 只复用现有 Trae 窗口,不会启动第二个 IDE。
+- 需要安装 `xdotool` 和 `xclip`,并保持 Trae 窗口已登录且选择 `DeepSeek-V4-Flash 正式版`。
+- 请求会串行执行,期间会短暂激活 Trae 窗口并使用系统剪贴板。
+- 服务进程需要可访问桌面会话,例如设置 `DISPLAY=:0` 和正确的 `XAUTHORITY`。
+
+除 `DeepSeek-V4-Flash-Official` 外,默认情况下代理仅允许已验证的 `kimi-k2.6`/`auto`;其他模型会返回明确的 400 错误,避免把 Kimi 响应误报成 Pro、Flash 或 GLM。`/v1/models` 中:
 
 - `selectable_in_ide: true`:该账号可在 Trae IDE 中选择。
 - `selectable_via_legacy_api: true`:已验证可通过本项目当前传输路径调用。
@@ -133,6 +140,9 @@ npm run setup
 | `PORT` | 监听端口 | 9220 |
 | `HOST` | 监听地址 | 127.0.0.1 |
 | `TRAE_DATA_DIR` | Trae `User` 配置目录，覆盖自动探测 | (自动探测) |
+| `TRAE_UI_DISPLAY` | 精确模型 UI 桥接使用的 X11 display | `DISPLAY` 或 `:0` |
+| `TRAE_UI_WINDOW_TITLE` | 用于查找已打开 Trae 窗口的标题 | `TraeCode CN` |
+| `TRAE_UI_TIMEOUT_MS` | 等待 Trae 完成单次请求的超时毫秒数 | 900000 |
 | `ALLOW_UNVERIFIED_MODEL_ROUTING` | 允许旧接口接受未验证模型名(可能仍路由到 Kimi) | false |
 
 ## 前置条件
@@ -140,6 +150,7 @@ npm run setup
 - Node.js >= 18
 - 已安装并登录任一 Trae IDE:Trea CN / TRAE SOLO CN / Trae(国际版) / TRAE SOLO(国际版)
 - 对应 IDE 的用户配置目录下存在 `globalStorage/storage.json`
+- Linux 上通过 Trae CN 精确调用 `DeepSeek-V4-Flash-Official` 时需要 X11、`xdotool` 和 `xclip`
 
 ## 项目结构
 
@@ -152,6 +163,7 @@ trae-local-api/
 │   ├── auth.js            # 认证管理
 │   ├── trae-decrypt.js    # tc 加密解密
 │   ├── trae-client.js     # Trae API 客户端
+│   ├── trae-ui-bridge.js  # 复用现有 Trae 窗口进行精确选模
 │   ├── openai-format.js   # OpenAI 格式转换
 │   └── anthropic-format.js # Anthropic 格式转换
 └── .env                   # 自动生成的配置

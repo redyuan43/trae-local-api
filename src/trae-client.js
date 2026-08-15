@@ -9,6 +9,7 @@
 const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
 const auth = require('./auth');
+const traeUiBridge = require('./trae-ui-bridge');
 
 const IDE_VERSION_CN = '3.3.87';
 const IDE_VERSION_CODE_CN = '20260806';
@@ -232,6 +233,30 @@ function buildChatBody(messages, model, stream, options) {
  * @param {object} options - 额外选项 { maxTokens }
  */
 async function sendChatRequest(messages, model, stream, baseUrl, options) {
+  const traeModel = mapModel(model);
+
+  if (traeUiBridge.supportsModel(traeModel)) {
+    const content = await traeUiBridge.sendChatRequest(messages, traeModel, {
+      timeoutMs: options && options.timeoutMs,
+    });
+    const sse = [
+      'event: output',
+      `data: ${JSON.stringify({ response: content })}`,
+      '',
+      'event: done',
+      `data: ${JSON.stringify({ finish_reason: 'stop' })}`,
+      '',
+    ].join('\n');
+    return {
+      response: new Response(sse, {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+      }),
+      model: traeModel,
+      endpoint: 'trae-ide-ui',
+    };
+  }
+
   const token = auth.getToken();
   const userId = auth.getUserId();
 
@@ -245,8 +270,6 @@ async function sendChatRequest(messages, model, stream, baseUrl, options) {
   if (auth.needsRefresh()) {
     await auth.refreshToken();
   }
-
-  const traeModel = mapModel(model);
 
   if (traeModel !== VERIFIED_LEGACY_MODEL
       && process.env.ALLOW_UNVERIFIED_MODEL_ROUTING !== 'true') {
