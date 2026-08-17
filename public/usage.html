@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Trae Usage Dashboard</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --card: #1a2029;
+      --card-hover: #222a36;
+      --border: #2a3441;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --accent: #2f81f7;
+      --green: #3fb950;
+      --yellow: #d29922;
+      --red: #f85149;
+      --purple: #a371f7;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+        'Microsoft YaHei', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      padding: 24px;
+      line-height: 1.5;
+    }
+
+    .container { max-width: 1100px; margin: 0 auto; }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    h1 {
+      font-size: 24px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--muted);
+      display: inline-block;
+    }
+    .status-dot.ok { background: var(--green); box-shadow: 0 0 8px var(--green); }
+    .status-dot.err { background: var(--red); box-shadow: 0 0 8px var(--red); }
+    .status-dot.loading { background: var(--yellow); animation: pulse 1s infinite; }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .auto-toggle {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .auto-toggle input { cursor: pointer; }
+
+    button {
+      background: var(--card);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 6px 14px;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    button:hover { background: var(--card-hover); border-color: var(--accent); }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px;
+      transition: background 0.15s;
+    }
+    .card:hover { background: var(--card-hover); }
+
+    .card-label {
+      font-size: 12px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 8px;
+    }
+
+    .card-value {
+      font-size: 26px;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+    }
+    .card-sub {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 4px;
+    }
+
+    .progress-card { grid-column: 1 / -1; }
+    .progress-bar {
+      height: 14px;
+      background: rgba(255,255,255,0.05);
+      border-radius: 7px;
+      overflow: hidden;
+      margin: 10px 0 8px;
+      display: flex;
+    }
+    .progress-used {
+      background: linear-gradient(90deg, var(--yellow), var(--red));
+      transition: width 0.6s ease;
+    }
+    .progress-remaining {
+      background: var(--green);
+      transition: width 0.6s ease;
+      flex: 1;
+    }
+    .progress-legend {
+      display: flex;
+      justify-content: space-between;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .progress-legend strong { color: var(--text); font-weight: 600; }
+
+    .section-title {
+      font-size: 16px;
+      font-weight: 600;
+      margin: 8px 0 12px;
+      color: var(--text);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+
+    th, td {
+      padding: 10px 14px;
+      text-align: right;
+      border-bottom: 1px solid var(--border);
+      font-variant-numeric: tabular-nums;
+      font-size: 13px;
+    }
+    th {
+      background: rgba(255,255,255,0.02);
+      color: var(--muted);
+      font-weight: 500;
+      text-transform: uppercase;
+      font-size: 11px;
+      letter-spacing: 0.5px;
+    }
+    th:first-child, td:first-child { text-align: left; }
+    tr:last-child td { border-bottom: none; }
+    tbody tr:hover { background: var(--card-hover); }
+    .model-name { font-weight: 500; }
+
+    .ratio-pill {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 10px;
+      background: rgba(163,113,247,0.15);
+      color: var(--purple);
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .error-banner {
+      background: rgba(248,81,73,0.1);
+      border: 1px solid var(--red);
+      color: var(--red);
+      padding: 12px 16px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      font-size: 13px;
+      display: none;
+    }
+    .error-banner.show { display: block; }
+
+    .skeleton {
+      color: var(--muted);
+      font-style: italic;
+    }
+
+    .footer {
+      margin-top: 32px;
+      text-align: center;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .footer a { color: var(--accent); text-decoration: none; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>
+        <span id="status-dot" class="status-dot loading"></span>
+        Trae 用量监控
+      </h1>
+      <div class="header-right">
+        <label class="auto-toggle">
+          <input type="checkbox" id="auto-refresh" checked />
+          自动刷新 (30s)
+        </label>
+        <button id="refresh-btn">手动刷新</button>
+        <span id="last-updated">—</span>
+      </div>
+    </header>
+
+    <div id="error-banner" class="error-banner"></div>
+
+    <div class="grid">
+      <div class="card progress-card">
+        <div class="card-label">账单周期进度</div>
+        <div class="progress-bar">
+          <div id="progress-used" class="progress-used" style="width: 0%"></div>
+          <div class="progress-remaining"></div>
+        </div>
+        <div class="progress-legend">
+          <span>已用 <strong id="legend-used">—</strong></span>
+          <span>剩余 <strong id="legend-remaining">—</strong></span>
+          <span>总额度 <strong id="legend-quota">—</strong></span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-label">剩余金额</div>
+        <div class="card-value" id="remaining-amount">—</div>
+        <div class="card-sub" id="used-ratio">—</div>
+      </div>
+
+      <div class="card">
+        <div class="card-label">已用金额</div>
+        <div class="card-value" id="used-amount">—</div>
+        <div class="card-sub" id="discount-info">—</div>
+      </div>
+
+      <div class="card">
+        <div class="card-label">估算剩余 Token</div>
+        <div class="card-value" id="remaining-tokens">—</div>
+        <div class="card-sub" id="conservative-tokens">—</div>
+      </div>
+
+      <div class="card">
+        <div class="card-label">缓存命中率</div>
+        <div class="card-value" id="cache-ratio">—</div>
+        <div class="card-sub" id="cache-detail">—</div>
+      </div>
+
+      <div class="card">
+        <div class="card-label">原始 Token 总量</div>
+        <div class="card-value" id="raw-tokens">—</div>
+        <div class="card-sub" id="billed-tokens">—</div>
+      </div>
+
+      <div class="card">
+        <div class="card-label">调用次数</div>
+        <div class="card-value" id="model-calls">—</div>
+        <div class="card-sub" id="sessions">—</div>
+      </div>
+
+      <div class="card">
+        <div class="card-label">周期重置时间</div>
+        <div class="card-value" id="reset-at" style="font-size: 16px;">—</div>
+        <div class="card-sub" id="reset-countdown">—</div>
+      </div>
+    </div>
+
+    <div class="section-title">模型明细</div>
+    <table>
+      <thead>
+        <tr>
+          <th>模型</th>
+          <th>原始 Token</th>
+          <th>计费 Token</th>
+          <th>调用次数</th>
+          <th>实际花费</th>
+          <th>每百万 Token</th>
+          <th>剩余估算</th>
+        </tr>
+      </thead>
+      <tbody id="models-body">
+        <tr><td colspan="7" class="skeleton">加载中…</td></tr>
+      </tbody>
+    </table>
+
+    <div class="footer">
+      数据来源：<code>GET /v1/usage/costs</code> · Trae Local API
+    </div>
+  </div>
+
+  <script>
+    const API_URL = '/v1/usage/costs';
+    const REFRESH_INTERVAL = 30 * 1000;
+    let refreshTimer = null;
+    let lastResetAt = null;
+
+    const $ = id => document.getElementById(id);
+
+    function setStatus(state) {
+      $('status-dot').className = 'status-dot ' + state;
+    }
+
+    function showError(msg) {
+      const el = $('error-banner');
+      el.textContent = msg;
+      el.classList.add('show');
+    }
+    function clearError() { $('error-banner').classList.remove('show'); }
+
+    function fmtMoney(v) {
+      if (v == null || !isFinite(v)) return '—';
+      return '¥' + Number(v).toLocaleString('zh-CN', {
+        minimumFractionDigits: 2, maximumFractionDigits: 2
+      });
+    }
+
+    function fmtTokens(v) {
+      if (v == null || !isFinite(v)) return '—';
+      const n = Number(v);
+      if (n >= 1e8) return (n / 1e8).toFixed(2) + ' 亿';
+      if (n >= 1e4) return (n / 1e4).toFixed(2) + ' 万';
+      return n.toLocaleString('zh-CN');
+    }
+
+    function fmtPct(v) {
+      if (v == null || !isFinite(v)) return '—';
+      return (v * 100).toFixed(2) + '%';
+    }
+
+    function fmtNum(v) {
+      if (v == null || !isFinite(v)) return '—';
+      return Number(v).toLocaleString('zh-CN');
+    }
+
+    function fmtDate(iso) {
+      if (!iso) return '—';
+      const d = new Date(iso);
+      if (isNaN(d)) return '—';
+      return d.toLocaleString('zh-CN', { hour12: false });
+    }
+
+    function fmtCountdown(iso) {
+      if (!iso) return '';
+      const diff = new Date(iso).getTime() - Date.now();
+      if (diff <= 0) return '已到期';
+      const days = Math.floor(diff / 86400000);
+      const hours = Math.floor((diff % 86400000) / 3600000);
+      return `还有 ${days} 天 ${hours} 小时`;
+    }
+
+    function updateLastUpdated() {
+      $('last-updated').textContent = '更新于 ' + new Date().toLocaleTimeString('zh-CN', { hour12: false });
+    }
+
+    function renderEmpty() {
+      ['remaining-amount', 'used-amount', 'remaining-tokens', 'cache-ratio',
+       'raw-tokens', 'model-calls', 'reset-at'].forEach(id => $(id).textContent = '—');
+      ['used-ratio', 'discount-info', 'conservative-tokens', 'cache-detail',
+       'billed-tokens', 'sessions', 'reset-countdown',
+       'legend-used', 'legend-remaining', 'legend-quota'].forEach(id => $(id).textContent = '—');
+      $('progress-used').style.width = '0%';
+      $('models-body').innerHTML = '<tr><td colspan="7" class="skeleton">无数据</td></tr>';
+    }
+
+    function render(data) {
+      const billing = data.billing || {};
+      const tokens = data.tokens || {};
+      const estimate = data.estimate || {};
+      const discount = data.discount || {};
+
+      // Progress
+      const usedRatio = billing.used_ratio || 0;
+      $('progress-used').style.width = (Math.min(usedRatio, 1) * 100) + '%';
+      $('legend-used').textContent = fmtMoney(billing.used_amount);
+      $('legend-remaining').textContent = fmtMoney(billing.remaining_amount);
+      $('legend-quota').textContent = fmtMoney(billing.quota_amount);
+
+      // Cards
+      $('remaining-amount').textContent = fmtMoney(billing.remaining_amount);
+      $('used-ratio').textContent = '已用 ' + fmtPct(usedRatio);
+
+      $('used-amount').textContent = fmtMoney(billing.used_amount);
+      $('discount-info').textContent = discount.pre_discount_amount != null
+        ? `折前 ${fmtMoney(discount.pre_discount_amount)} · 折扣 ${(discount.effective_factor * 100).toFixed(1)}%`
+        : '—';
+
+      $('remaining-tokens').textContent = fmtTokens(estimate.remaining_tokens);
+      $('conservative-tokens').textContent = estimate.conservative_remaining_tokens != null
+        ? '保守 ' + fmtTokens(estimate.conservative_remaining_tokens)
+        : '—';
+
+      $('cache-ratio').textContent = fmtPct(tokens.cache_hit_ratio);
+      $('cache-detail').textContent = `缓存输入 ${fmtTokens(tokens.cache_input)} / 输入 ${fmtTokens(tokens.input)}`;
+
+      $('raw-tokens').textContent = fmtTokens(tokens.raw_total);
+      $('billed-tokens').textContent = `计费 ${fmtTokens(tokens.billed_total)}`;
+
+      $('model-calls').textContent = fmtNum(tokens.model_calls);
+      $('sessions').textContent = `${fmtNum(tokens.sessions)} 次会话`;
+
+      lastResetAt = billing.reset_at;
+      $('reset-at').textContent = fmtDate(billing.reset_at);
+      $('reset-countdown').textContent = fmtCountdown(billing.reset_at);
+
+      // Models
+      const models = data.models || [];
+      if (models.length === 0) {
+        $('models-body').innerHTML = '<tr><td colspan="7" class="skeleton">无模型数据</td></tr>';
+      } else {
+        $('models-body').innerHTML = models.map(m => `
+          <tr>
+            <td class="model-name">${escapeHtml(m.model)}${m.config_name ? `<div style="font-size:11px;color:var(--muted)">${escapeHtml(m.config_name)}</div>` : ''}</td>
+            <td>${fmtTokens(m.raw_tokens)}</td>
+            <td>${fmtTokens(m.billed_tokens)}</td>
+            <td>${fmtNum(m.model_calls)}</td>
+            <td>${fmtMoney(m.actual_amount)}</td>
+            <td>${m.effective_cost_per_million_tokens != null ? '¥' + m.effective_cost_per_million_tokens.toFixed(2) : '—'}</td>
+            <td>${m.estimated_remaining_tokens != null ? fmtTokens(m.estimated_remaining_tokens) : '—'}</td>
+          </tr>
+        `).join('');
+      }
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      })[c]);
+    }
+
+    async function fetchUsage() {
+      setStatus('loading');
+      try {
+        const res = await fetch(API_URL, { cache: 'no-store' });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error?.message || `HTTP ${res.status}`);
+        }
+        const data = await res.json();
+        clearError();
+        render(data);
+        setStatus('ok');
+        updateLastUpdated();
+      } catch (e) {
+        setStatus('err');
+        showError('获取用量失败: ' + e.message);
+        renderEmpty();
+      }
+    }
+
+    function scheduleNext() {
+      if (refreshTimer) clearTimeout(refreshTimer);
+      if ($('auto-refresh').checked) {
+        refreshTimer = setTimeout(() => {
+          fetchUsage().finally(scheduleNext);
+        }, REFRESH_INTERVAL);
+      }
+    }
+
+    function startAutoRefresh() {
+      if ($('auto-refresh').checked) scheduleNext();
+      else if (refreshTimer) { clearTimeout(refreshTimer); refreshTimer = null; }
+    }
+
+    $('refresh-btn').addEventListener('click', () => {
+      fetchUsage().finally(startAutoRefresh);
+    });
+    $('auto-refresh').addEventListener('change', startAutoRefresh);
+
+    // Update countdown every minute
+    setInterval(() => {
+      if (lastResetAt) $('reset-countdown').textContent = fmtCountdown(lastResetAt);
+    }, 60000);
+
+    // Initial load
+    fetchUsage().finally(startAutoRefresh);
+  </script>
+</body>
+</html>

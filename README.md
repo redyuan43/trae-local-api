@@ -4,6 +4,9 @@
 
 支持四个 Trae 版本:Trea CN、TRAE SOLO CN、Trae SG(国际版)、TRAE SOLO(国际版)。
 
+> 分享给 API 使用者时，请直接提供 [API_GUIDE.md](./API_GUIDE.md)。
+> 该文档包含访问密码、协议、模型、多模态、费用统计和远程连接说明。
+
 ## 功能
 
 - 自动解密四版本认证数据(CN/SOLO/SOLO-SG 使用 tc 加密,SG 使用明文 JSON)
@@ -54,14 +57,14 @@ npm start
 
 ```powershell
 $env:ANTHROPIC_BASE_URL = "http://localhost:9220"
-$env:ANTHROPIC_API_KEY = "trae-local-api"
+$env:ANTHROPIC_API_KEY = "YOUR_API_KEY"
 claude
 ```
 
 ### 5. 连接 Cursor
 
 - Base URL: `http://localhost:9220/v1`
-- API Key: `trae-local-api`
+- API Key: `.env` 中配置的 `API_KEY`
 - Model: `auto`
 
 ### 6. Python 调用
@@ -69,7 +72,7 @@ claude
 ```python
 from openai import OpenAI
 
-client = OpenAI(base_url="http://localhost:9220/v1", api_key="trae-local-api")
+client = OpenAI(base_url="http://localhost:9220/v1", api_key="YOUR_API_KEY")
 
 response = client.chat.completions.create(
     model="auto",
@@ -95,7 +98,7 @@ OpenAI 格式使用 Base64 Data URL:
 import base64
 from openai import OpenAI
 
-client = OpenAI(base_url="http://localhost:9220/v1", api_key="trae-local-api")
+client = OpenAI(base_url="http://localhost:9220/v1", api_key="YOUR_API_KEY")
 image = base64.b64encode(open("image.png", "rb").read()).decode()
 
 response = client.chat.completions.create(
@@ -143,6 +146,9 @@ npm run setup
 | GET | `/v1/models` | 模型列表 |
 | POST | `/v1/chat/completions` | OpenAI 格式对话 |
 | POST | `/v1/messages` | Anthropic 格式对话 |
+| POST | `/v1/messages/count_tokens` | Anthropic Token 估算 |
+| GET | `/usage` | 本机费用看板 |
+| GET | `/v1/usage/costs` | 本机费用统计 JSON |
 
 ## 模型选择
 
@@ -183,6 +189,33 @@ npm run setup
 | `TRAE_DEVICE_ID` | 覆盖自动读取的 Trae 设备 ID | (自动读取) |
 | `TRAE_MACHINE_ID` | 覆盖自动生成的稳定机器 ID | (自动生成) |
 | `MAX_CONTEXT_TOKENS` | 发送前的上下文截断阈值 | 90000 |
+
+## 企业费用统计 API
+
+先从已登录的 Chrome 企业控制台同步一次只读会话:
+
+```bash
+npm run sync:enterprise-session
+```
+
+本机页面可直接调用，无需 `Authorization` 或 API Key:
+
+```bash
+curl http://127.0.0.1:9220/v1/usage/costs
+```
+
+```js
+const usage = await fetch('http://127.0.0.1:9220/v1/usage/costs')
+  .then(response => response.json());
+
+console.log(usage.billing.remaining_amount);
+console.log(usage.estimate.remaining_tokens);
+console.log(usage.tokens.cache_hit_ratio);
+```
+
+该接口仅接受本机回环地址和本地页面 Origin，响应不包含企业 Cookie、
+用户邮箱、用户 ID 或租户 ID。金额字段来自企业用量管理接口；Token
+余额为按照当前周期实际模型结构、折扣和缓存情况计算的估值。
 
 ## 前置条件
 

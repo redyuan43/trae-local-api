@@ -11,9 +11,11 @@
 require('dotenv').config();
 
 const crypto = require('crypto');
+const path = require('path');
 const express = require('express');
 const auth = require('./auth');
 const traeClient = require('./trae-client');
+const traeUsageClient = require('./trae-usage-client');
 const {
   MAX_IMAGE_COUNT,
   parseAnthropicImage,
@@ -75,6 +77,37 @@ function requireAuth(req, res, next) {
   next();
 }
 
+function isLoopbackAddress(address) {
+  const normalized = String(address || '').replace(/^::ffff:/, '');
+  return normalized === '127.0.0.1' || normalized === '::1';
+}
+
+function requireLocalUsageAccess(req, res, next) {
+  if (!isLoopbackAddress(req.socket.remoteAddress)) {
+    return res.status(403).json({
+      error: { message: 'Usage API is only available from this device', type: 'forbidden' },
+    });
+  }
+
+  const origin = req.headers.origin;
+  if (origin && origin !== 'null') {
+    try {
+      const hostname = new URL(origin).hostname;
+      if (!['localhost', '127.0.0.1', '::1'].includes(hostname)) {
+        return res.status(403).json({
+          error: { message: 'Usage API only accepts local page origins', type: 'forbidden' },
+        });
+      }
+      res.header('Access-Control-Allow-Origin', origin);
+    } catch {
+      return res.status(403).json({
+        error: { message: 'Invalid Origin header', type: 'forbidden' },
+      });
+    }
+  }
+  next();
+}
+
 // CORS + Request logging
 app.use((req, res, next) => {
   console.log(`[server] ${req.method} ${req.path}`);
@@ -105,6 +138,26 @@ app.get('/v1/models', requireAuth, async (req, res) => {
     res.json({ object: 'list', data: models });
   } catch (err) {
     return sendAnthropicError(res, 500, 'api_error', err.message);
+  }
+});
+
+// Real-time usage dashboard. Same-origin page that polls /v1/usage/costs.
+app.get('/usage', (req, res) => {
+  res.sendFile(path.join(__dirname, '..', 'public', 'usage.html'));
+});
+
+// Enterprise usage and cost statistics. This endpoint intentionally has no
+// API key, but remains limited to local clients and local browser origins.
+app.get('/v1/usage/costs', requireLocalUsageAccess, async (req, res) => {
+  try {
+    const result = await traeUsageClient.getUsageCosts();
+    res.header('Cache-Control', 'no-store');
+    res.json(result);
+  } catch (err) {
+    console.error(`[server] Usage error: ${err.message}`);
+    res.status(err.status || 502).json({
+      error: { message: err.message, type: 'usage_api_error' },
+    });
   }
 });
 
@@ -673,8 +726,10 @@ function start() {
     console.log(`[server] API Key: ${API_KEY ? '***' : '(not set - open access)'}`);
     console.log('');
     console.log('Endpoints:');
+    console.log(`  GET  http://localhost:${PORT}/usage              (usage dashboard)`);
     console.log(`  GET  http://localhost:${PORT}/v1/status`);
     console.log(`  GET  http://localhost:${PORT}/v1/models`);
+    console.log(`  GET  http://localhost:${PORT}/v1/usage/costs    (local, no API key)`);
     console.log(`  POST http://localhost:${PORT}/v1/chat/completions  (OpenAI)`);
     console.log(`  POST http://localhost:${PORT}/v1/messages          (Anthropic)`);
     console.log('');
