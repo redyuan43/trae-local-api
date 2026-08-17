@@ -12,6 +12,7 @@
 - Claude/OpenAI 模型名自动映射到 Trae 模型配置
 - 支持流式输出
 - 直接调用 Trae Agent v3 后端，不操作 IDE 窗口或剪贴板
+- 通过 Trae 云端资源 API 支持 OpenAI/Anthropic 标准图片输入
 - 校验服务端实际采用的模型配置，避免静默路由到其他模型
 - 完整支持 Claude Code 工具调用(tool_use content block)
 - 自适应 CN/SG 两种 SSE 事件格式(CN 带 `event:output` 前缀,SG 大部分 data 行无 event 前缀)
@@ -81,6 +82,51 @@ for chunk in response:
         print(chunk.choices[0].delta.content, end="", flush=True)
 ```
 
+### 7. 图片调用
+
+当前确认支持图片输入的 Trae 配置:
+
+- `kimi-k2.7-code`
+- `glm-5v-turbo`
+
+OpenAI 格式使用 Base64 Data URL:
+
+```python
+import base64
+from openai import OpenAI
+
+client = OpenAI(base_url="http://localhost:9220/v1", api_key="trae-local-api")
+image = base64.b64encode(open("image.png", "rb").read()).decode()
+
+response = client.chat.completions.create(
+    model="kimi-k2.7-code",
+    messages=[{
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "请描述这张图片"},
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:image/png;base64,{image}"},
+            },
+        ],
+    }],
+)
+
+print(response.choices[0].message.content)
+```
+
+Anthropic `/v1/messages` 接受标准 `type: image`、`source.type: base64` 内容块。
+图片会由本服务直接上传到 Trae 云端，再以 `image_id` 调用 Agent v3，不依赖
+Trae IDE 窗口或本地 IPC。
+
+限制:
+
+- 仅支持 JPEG、PNG、GIF、WebP。
+- 每次请求最多 5 张图片，单张解码后最大 3 MB。
+- 图片宽高范围为 14 到 8192 像素。
+- 暂不代为下载 HTTP(S) 图片 URL。
+- 图片请求指定文本模型时返回 400，不自动切换模型。
+
 ## 手动解密
 
 ```bash
@@ -102,11 +148,14 @@ npm run setup
 
 `GET /v1/models` 会从 Trae 账号的实时配置接口读取 IDE 中可见的模型，而不是返回写死列表。当前账号中的关键配置名包括:
 
-| IDE 显示名 | 请求时的精确配置名 | Dev 内部配置 |
-|------------|--------------------|--------------|
-| DeepSeek-V4-Flash 正式版 | `DeepSeek-V4-Flash-Official` | `deepseek_v4_flash_official__dev` |
-| DeepSeek-V4-Pro | `deepseek-V4-Pro` | `deepseek-V4-Pro__dev` |
-| DeepSeek-V4-Flash | `DeepSeek-V4-Flash` | `DeepSeek-V4-Flash__dev` |
+| IDE 显示名 | 请求时的精确配置名 | 图片输入 |
+|------------|--------------------|----------|
+| Kimi-K2.7-Code | `kimi-k2.7-code` | 支持 |
+| GLM-5V-Turbo | `glm-5v-turbo` | 支持 |
+| GLM-5.2 | `glm-5.2` | 不支持 |
+| DeepSeek-V4-Flash 正式版 | `DeepSeek-V4-Flash-Official` | 不支持 |
+| DeepSeek-V4-Pro | `deepseek-V4-Pro` | 以实时模型目录为准 |
+| DeepSeek-V4-Flash | `DeepSeek-V4-Flash` | 以实时模型目录为准 |
 
 本项目直接调用 `/api/agent/v3/create_agent_task`，请求时使用 Trae 界面对应的精确配置名。服务会检查返回的 `model_config.config_name` 是否与请求一致；不一致时直接报错，不会把降级后的响应伪装成目标模型。
 
@@ -114,6 +163,7 @@ npm run setup
 
 - `selectable_in_ide: true`:该账号可在 Trae IDE 中选择。
 - `selectable_via_agent_api: true`:可通过 Agent v3 直连路径调用。
+- `input_modalities`:该配置接受的输入类型，例如 `["text", "image"]`。
 
 ## 环境变量
 
@@ -129,6 +179,7 @@ npm run setup
 | `HOST` | 监听地址 | 127.0.0.1 |
 | `TRAE_DATA_DIR` | Trae `User` 配置目录，覆盖自动探测 | (自动探测) |
 | `TRAE_AGENT_API_URL` | Agent v3 后端地址 | `https://console.enterprise.trae.cn/api/agent/v3/create_agent_task` |
+| `TRAE_RESOURCE_API_BASE` | Trae 图片资源 API 地址 | `https://console.enterprise.trae.cn` |
 | `TRAE_DEVICE_ID` | 覆盖自动读取的 Trae 设备 ID | (自动读取) |
 | `TRAE_MACHINE_ID` | 覆盖自动生成的稳定机器 ID | (自动生成) |
 | `MAX_CONTEXT_TOKENS` | 发送前的上下文截断阈值 | 90000 |
@@ -151,8 +202,11 @@ trae-local-api/
 │   ├── trae-decrypt.js    # tc 加密解密
 │   ├── trae-client.js     # 模型目录与路由
 │   ├── trae-agent-client.js # Agent v3 直连客户端
+│   ├── trae-resource-client.js # Trae 云端图片上传
+│   ├── image-utils.js     # 图片解析、校验与 CRC32
 │   ├── openai-format.js   # OpenAI 格式转换
 │   └── anthropic-format.js # Anthropic 格式转换
+├── test/                  # Node 内置测试
 └── .env                   # 自动生成的配置
 ```
 

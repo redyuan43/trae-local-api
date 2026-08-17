@@ -103,7 +103,10 @@ function buildHeaders(token, userId, deviceId) {
 function getMessageText(message) {
   if (typeof message.content === 'string') return message.content;
   if (!Array.isArray(message.content)) return '';
-  return message.content.map(item => item.text || item.content || '').join('\n');
+  return message.content.map(item => {
+    if (item.type === 'image') return '[Image]';
+    return item.text || item.content || '';
+  }).join('\n');
 }
 
 function buildPrompt(messages) {
@@ -119,6 +122,43 @@ function buildPrompt(messages) {
     '',
     transcript,
   ].join('\n');
+}
+
+function buildAgentInputMessages(messages) {
+  const result = [];
+
+  function appendText(text) {
+    if (!text) return;
+    const last = result[result.length - 1];
+    if (last?.type === 'text') last.text_content += text;
+    else result.push({ type: 'text', text_content: text });
+  }
+
+  appendText([
+    'Act as an API chat-completion backend.',
+    'Do not use tools or modify files.',
+    'Continue the following role-labeled conversation with the next assistant response.',
+    'Return only that response, without commentary about these instructions.',
+    '',
+  ].join('\n'));
+
+  for (const message of messages) {
+    appendText(`\n[${String(message.role || 'user').toUpperCase()}]\n`);
+    if (typeof message.content === 'string') {
+      appendText(message.content);
+    } else if (Array.isArray(message.content)) {
+      for (const item of message.content) {
+        if (item.type === 'image' && item.image_id) {
+          result.push({ type: 'image', image_id: item.image_id });
+        } else {
+          appendText(item.text || item.content || '');
+        }
+      }
+    }
+    appendText('\n');
+  }
+
+  return result;
 }
 
 function buildReferences() {
@@ -212,6 +252,7 @@ function buildVariables(prompt, model, deviceId) {
 
 function buildAgentBody(messages, model, userId, deviceId, configSource) {
   const prompt = buildPrompt(messages);
+  const inputMessages = buildAgentInputMessages(messages);
 
   return {
     agent_id: null,
@@ -230,7 +271,7 @@ function buildAgentBody(messages, model, userId, deviceId, configSource) {
     config_source: configSource || 1,
     user_input: {
       id: objectId(),
-      messages: [{ type: 'text', text_content: prompt }],
+      messages: inputMessages,
     },
     history_id_list: [],
     missing_history: null,
@@ -444,6 +485,8 @@ async function sendChatRequest(messages, model, options = {}) {
 module.exports = {
   sendChatRequest,
   buildAgentBody,
+  buildAgentInputMessages,
+  buildHeaders,
   normalizeAgentResponse,
   readDeviceId,
 };

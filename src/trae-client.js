@@ -5,6 +5,7 @@
 const crypto = require('crypto');
 const auth = require('./auth');
 const traeAgentClient = require('./trae-agent-client');
+const traeResourceClient = require('./trae-resource-client');
 
 const IDE_VERSION_CN = '3.3.87';
 const IDE_VERSION_CODE_CN = '20260806';
@@ -79,6 +80,36 @@ function getMessageContent(message) {
   if (typeof message.content === 'string') return message.content;
   if (!Array.isArray(message.content)) return '';
   return message.content.map(item => item.text || item.content || '').join(' ');
+}
+
+function hasImageInput(messages) {
+  return messages.some(message =>
+    Array.isArray(message.content)
+    && message.content.some(item => item?.type === 'image')
+  );
+}
+
+function isMultimodalConfig(config) {
+  return config?.display_config?.multimodal === true;
+}
+
+async function uploadMessageImages(messages) {
+  return Promise.all(messages.map(async message => {
+    if (!Array.isArray(message.content)) return message;
+
+    const content = await Promise.all(message.content.map(async item => {
+      if (item?.type !== 'image') return item;
+      if (!item.image) {
+        const err = new Error('Image input is missing decoded image data');
+        err.status = 400;
+        throw err;
+      }
+
+      const imageId = await traeResourceClient.uploadImage(item.image);
+      return { type: 'image', image_id: imageId };
+    }));
+    return { ...message, content };
+  }));
 }
 
 function truncateMessages(messages, maxTokens) {
@@ -182,6 +213,7 @@ async function resolveConfig(model) {
 async function sendChatRequest(messages, model, stream, options = {}) {
   const traeModel = mapModel(model);
   const config = await resolveConfig(traeModel);
+  const containsImages = hasImageInput(messages);
 
   if (config && config.config_switch === false) {
     const err = new Error(`Trae model "${traeModel}" is disabled for this account`);
@@ -189,8 +221,22 @@ async function sendChatRequest(messages, model, stream, options = {}) {
     throw err;
   }
 
+  if (containsImages && !isMultimodalConfig(config)) {
+    const err = new Error(
+      `Trae model "${traeModel}" does not support image input. `
+      + 'Use "kimi-k2.7-code" or "glm-5v-turbo".'
+    );
+    err.status = 400;
+    throw err;
+  }
+
+  const truncated = truncateMessages(messages);
+  const preparedMessages = containsImages
+    ? await uploadMessageImages(truncated)
+    : truncated;
+
   return traeAgentClient.sendChatRequest(
-    truncateMessages(messages),
+    preparedMessages,
     traeModel,
     {
       ...options,
@@ -222,6 +268,10 @@ async function getModels() {
         max_internal_model: max?.model_name || null,
         context_window: dev?.prompt_max_tokens || null,
         max_output_tokens: dev?.max_tokens || null,
+        multimodal: isMultimodalConfig(config),
+        input_modalities: isMultimodalConfig(config)
+          ? ['text', 'image']
+          : ['text'],
         selectable_in_ide: true,
         selectable_via_agent_api: true,
       };
@@ -231,6 +281,8 @@ async function getModels() {
 module.exports = {
   sendChatRequest,
   getModels,
+  hasImageInput,
+  isMultimodalConfig,
   mapModel,
   MODEL_MAP,
   MODEL_TIERS,

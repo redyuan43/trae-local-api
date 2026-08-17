@@ -5,11 +5,11 @@
   "main": "src/server.js",
   "scripts": {
     "setup": "node setup.js",
-    "start": "node src/server.js"
+    "start": "node src/server.js",
+    "test": "node --test"
   },
   "dependencies": {
-    "express": "^4.21.0",
     "dotenv": "^16.4.0",
-    "uuid": "^10.0.0"
+    "express": "^4.21.0"
   }
 }

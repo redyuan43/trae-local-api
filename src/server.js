@@ -10,14 +10,20 @@
 
 require('dotenv').config();
 
+const crypto = require('crypto');
 const express = require('express');
 const auth = require('./auth');
 const traeClient = require('./trae-client');
+const {
+  MAX_IMAGE_COUNT,
+  parseAnthropicImage,
+  parseOpenAIImage,
+} = require('./image-utils');
 const { handleOpenAIResponse } = require('./openai-format');
 const { handleAnthropicResponse, estimateTokens } = require('./anthropic-format');
 
 const app = express();
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '25mb' }));
 
 // ============================================================
 // Anthropic 规范错误响应工具
@@ -106,11 +112,77 @@ app.get('/v1/models', requireAuth, async (req, res) => {
 // Content extraction helpers
 // ============================================================
 
-function extractTextFromBlocks(blocks) {
+function imageRequestError(message) {
+  const err = new Error(message);
+  err.status = 400;
+  return err;
+}
+
+function createImageCollector(protocol) {
+  const nonce = crypto.randomUUID();
+  const entries = [];
+
+  function add(block, role) {
+    if (role === 'system') {
+      throw imageRequestError('Images are not supported in system messages');
+    }
+    if (entries.length >= MAX_IMAGE_COUNT) {
+      throw imageRequestError(`A request can contain at most ${MAX_IMAGE_COUNT} images`);
+    }
+
+    const image = protocol === 'anthropic'
+      ? parseAnthropicImage(block)
+      : parseOpenAIImage(block);
+    const token = `[[TRAE_API_IMAGE_${nonce}_${entries.length}]]`;
+    entries.push({ token, image });
+    return token;
+  }
+
+  function expandText(text) {
+    if (!entries.length || typeof text !== 'string') return text;
+    const content = [];
+    let remaining = text;
+
+    while (remaining) {
+      let matched = null;
+      let matchedAt = -1;
+      for (const entry of entries) {
+        const index = remaining.indexOf(entry.token);
+        if (index !== -1 && (matchedAt === -1 || index < matchedAt)) {
+          matched = entry;
+          matchedAt = index;
+        }
+      }
+      if (!matched) break;
+
+      const before = remaining.slice(0, matchedAt);
+      if (before) content.push({ type: 'text', text: before });
+      content.push({ type: 'image', image: matched.image });
+      remaining = remaining.slice(matchedAt + matched.token.length);
+    }
+
+    if (remaining) content.push({ type: 'text', text: remaining });
+    return content.length ? content : text;
+  }
+
+  function expandMessages(messages) {
+    return messages.map(message => ({
+      ...message,
+      content: expandText(message.content),
+    }));
+  }
+
+  return { add, expandMessages };
+}
+
+function extractTextFromBlocks(blocks, imageCollector, role = 'user') {
   const parts = [];
   for (const block of blocks) {
     if (block.type === 'text' && block.text) parts.push(block.text);
-    else if (block.type === 'image') parts.push('[Image]');
+    else if (block.type === 'image') {
+      if (!imageCollector) throw imageRequestError('Image input is not available here');
+      parts.push(imageCollector.add(block, role));
+    }
   }
   return parts.join('\n');
 }
@@ -121,7 +193,9 @@ function extractToolResultText(block) {
     const parts = [];
     for (const c of block.content) {
       if (c.type === 'text' && c.text) parts.push(c.text);
-      else if (c.type === 'image') parts.push('[Image]');
+      else if (c.type === 'image') {
+        throw imageRequestError('Images inside tool_result blocks are not supported');
+      }
     }
     return parts.join('\n') || '(empty)';
   }
@@ -193,12 +267,15 @@ function toolsToSystemPrompt(tools) {
 // ============================================================
 
 function convertAnthropicMessages(messages, systemPrompt, tools) {
+  const imageCollector = createImageCollector('anthropic');
   const systemParts = [];
 
   // System prompt
   if (systemPrompt) {
     const sysContent = typeof systemPrompt === 'string' ? systemPrompt :
-      Array.isArray(systemPrompt) ? extractTextFromBlocks(systemPrompt) : '';
+      Array.isArray(systemPrompt)
+        ? extractTextFromBlocks(systemPrompt, imageCollector, 'system')
+        : '';
     const cleaned = cleanContent(sysContent);
     if (cleaned) systemParts.push(cleaned);
   }
@@ -211,7 +288,9 @@ function convertAnthropicMessages(messages, systemPrompt, tools) {
   for (const m of messages) {
     if (m.role === 'system') {
       const text = typeof m.content === 'string' ? m.content :
-        Array.isArray(m.content) ? extractTextFromBlocks(m.content) : '';
+        Array.isArray(m.content)
+          ? extractTextFromBlocks(m.content, imageCollector, 'system')
+          : '';
       const cleaned = cleanContent(text);
       if (cleaned) systemParts.push(cleaned);
     }
@@ -240,7 +319,7 @@ function convertAnthropicMessages(messages, systemPrompt, tools) {
 
     // Assistant message
     if (m.role === 'assistant') {
-      const textPart = extractTextFromBlocks(m.content);
+      const textPart = extractTextFromBlocks(m.content, imageCollector, m.role);
       const toolUses = m.content.filter(b => b.type === 'tool_use');
 
       // No tool calls — plain text
@@ -255,7 +334,7 @@ function convertAnthropicMessages(messages, systemPrompt, tools) {
       if (i + 1 < messages.length && messages[i + 1].role === 'user') {
         const nextBlocks = Array.isArray(messages[i + 1].content) ? messages[i + 1].content : [];
         const toolResults = nextBlocks.filter(b => b.type === 'tool_result');
-        const nextText = extractTextFromBlocks(nextBlocks);
+        const nextText = extractTextFromBlocks(nextBlocks, imageCollector, 'user');
 
         if (toolResults.length > 0) {
           const toolLines = toolUses.map(tu => {
@@ -292,7 +371,7 @@ function convertAnthropicMessages(messages, systemPrompt, tools) {
       i++;
 
     } else if (m.role === 'user') {
-      const textPart = extractTextFromBlocks(m.content);
+      const textPart = extractTextFromBlocks(m.content, imageCollector, m.role);
       const toolResults = m.content.filter(b => b.type === 'tool_result');
       const cleanedText = cleanContent(textPart);
 
@@ -308,7 +387,7 @@ function convertAnthropicMessages(messages, systemPrompt, tools) {
       }
       i++;
     } else {
-      const textPart = extractTextFromBlocks(m.content);
+      const textPart = extractTextFromBlocks(m.content, imageCollector, m.role);
       const cleaned = cleanContent(textPart);
       if (cleaned) result.push({ role: m.role, content: cleaned });
       i++;
@@ -324,7 +403,7 @@ function convertAnthropicMessages(messages, systemPrompt, tools) {
     }
   }
 
-  return result.filter(Boolean);
+  return imageCollector.expandMessages(result.filter(Boolean));
 }
 
 // ============================================================
@@ -332,6 +411,7 @@ function convertAnthropicMessages(messages, systemPrompt, tools) {
 // ============================================================
 
 function convertOpenAIMessages(messages, tools) {
+  const imageCollector = createImageCollector('openai');
   const systemParts = [];
 
   // Tool definitions → system prompt
@@ -342,7 +422,12 @@ function convertOpenAIMessages(messages, tools) {
   for (const m of messages) {
     if (m.role === 'system') {
       const text = typeof m.content === 'string' ? m.content :
-        Array.isArray(m.content) ? m.content.map(c => c.text || c.content || '').join('\n') : '';
+        Array.isArray(m.content)
+          ? m.content.map(c => {
+            if (c.type === 'image_url') return imageCollector.add(c, 'system');
+            return c.text || c.content || '';
+          }).join('\n')
+          : '';
       const cleaned = cleanContent(text);
       if (cleaned) systemParts.push(cleaned);
     }
@@ -357,7 +442,12 @@ function convertOpenAIMessages(messages, tools) {
     if (m.role === 'system') continue;
     let content = '';
     if (typeof m.content === 'string') content = m.content;
-    else if (Array.isArray(m.content)) content = m.content.map(c => c.text || c.content || '').join('\n');
+    else if (Array.isArray(m.content)) {
+      content = m.content.map(c => {
+        if (c.type === 'image_url') return imageCollector.add(c, m.role);
+        return c.text || c.content || '';
+      }).join('\n');
+    }
     const cleaned = cleanContent(content);
     if (cleaned) result.push({ role: m.role, content: cleaned });
   }
@@ -371,7 +461,7 @@ function convertOpenAIMessages(messages, tools) {
     }
   }
 
-  return result.filter(Boolean);
+  return imageCollector.expandMessages(result.filter(Boolean));
 }
 
 // ============================================================
@@ -387,10 +477,10 @@ app.post('/v1/chat/completions', requireAuth, async (req, res) => {
 
   console.log(`[server] OpenAI request: model=${model}, stream=${stream}, messages=${messages.length}, body=${JSON.stringify(req.body).length} bytes`);
 
-  const converted = convertOpenAIMessages(messages, tools);
-  console.log(`[server] Converted: ${messages.length} -> ${converted.length} messages`);
-
   try {
+    const converted = convertOpenAIMessages(messages, tools);
+    console.log(`[server] Converted: ${messages.length} -> ${converted.length} messages`);
+
     const { response: fetchResp, model: usedModel } = await traeClient.sendChatRequest(
       converted, model, stream, { maxTokens: max_tokens }
     );
@@ -511,23 +601,26 @@ app.post('/v1/messages', requireAuth, async (req, res) => {
     console.log(`[server]   in[${i}] role=${m.role}, types=${types}`);
   }
 
-  // Convert to clean text messages
-  const converted = convertAnthropicMessages(messages, system, tools);
-
-  // Log output messages
-  const totalSize = JSON.stringify(converted).length;
-  console.log(`[server] Converted: ${messages.length} -> ${converted.length} messages, ${totalSize} bytes`);
-  for (let i = 0; i < converted.length; i++) {
-    const m = converted[i];
-    const len = typeof m.content === 'string' ? m.content.length : 0;
-    const preview = typeof m.content === 'string' ? m.content.substring(0, 80).replace(/\n/g, '\\n') : '';
-    console.log(`[server]   out[${i}] role=${m.role}, len=${len}, preview=${preview}`);
-  }
-
   // 估算输入 token 数(用于 Anthropic usage 字段)
   const inputTokens = estimateInputTokens(system, messages, tools);
 
   try {
+    // Convert to clean text/image messages
+    const converted = convertAnthropicMessages(messages, system, tools);
+
+    const textSize = converted.reduce((sum, message) => {
+      if (typeof message.content === 'string') return sum + message.content.length;
+      if (!Array.isArray(message.content)) return sum;
+      return sum + message.content.reduce(
+        (inner, block) => inner + (block.type === 'text' ? block.text.length : 0),
+        0
+      );
+    }, 0);
+    console.log(
+      `[server] Converted: ${messages.length} -> ${converted.length} messages, `
+      + `${textSize} text bytes`
+    );
+
     const { response: fetchResp, model: usedModel } = await traeClient.sendChatRequest(
       converted, model, stream, { maxTokens: max_tokens }
     );
@@ -588,4 +681,12 @@ function start() {
   });
 }
 
-start();
+if (require.main === module) start();
+
+module.exports = {
+  app,
+  convertAnthropicMessages,
+  convertOpenAIMessages,
+  createImageCollector,
+  start,
+};

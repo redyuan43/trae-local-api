@@ -2,7 +2,7 @@
  * openai-format.js - Convert Trae SSE events to OpenAI-compatible format
  */
 
-const { v4: uuidv4 } = require('uuid');
+const crypto = require('crypto');
 
 /**
  * Parse Trae SSE response stream and convert to OpenAI format
@@ -75,7 +75,7 @@ async function collectNonStreaming(fetchResponse, model) {
   const completionTokens = Math.max(1, Math.ceil(completionBytes / 4));
 
   return {
-    id: `chatcmpl-${uuidv4()}`,
+    id: `chatcmpl-${crypto.randomUUID()}`,
     object: 'chat.completion',
     created: Math.floor(Date.now() / 1000),
     model: model,
@@ -176,7 +176,7 @@ async function* streamGenerator(fetchResponse, model) {
             completionBytes += Buffer.byteLength(placeholder, 'utf8');
             contentChunkCount += 1;
             yield `data: ${JSON.stringify({
-              id: `chatcmpl-${uuidv4()}`,
+              id: `chatcmpl-${crypto.randomUUID()}`,
               object: 'chat.completion.chunk',
               created: Math.floor(Date.now() / 1000),
               model,
@@ -201,7 +201,7 @@ async function* streamGenerator(fetchResponse, model) {
             1, Math.ceil(completionBytes / 4)
           );
           const usageChunk = {
-            id: `chatcmpl-${uuidv4()}`,
+            id: `chatcmpl-${crypto.randomUUID()}`,
             object: 'chat.completion.chunk',
             created: Math.floor(Date.now() / 1000),
             model,
@@ -239,7 +239,7 @@ async function* streamGenerator(fetchResponse, model) {
       const placeholder = '(trae upstream 流异常结束，未产生任何内容)';
       completionBytes += Buffer.byteLength(placeholder, 'utf8');
       yield `data: ${JSON.stringify({
-        id: `chatcmpl-${uuidv4()}`,
+        id: `chatcmpl-${crypto.randomUUID()}`,
         object: 'chat.completion.chunk',
         created: Math.floor(Date.now() / 1000),
         model,
@@ -248,7 +248,7 @@ async function* streamGenerator(fetchResponse, model) {
     }
     const completionTokens = Math.max(1, Math.ceil(completionBytes / 4));
     yield `data: ${JSON.stringify({
-      id: `chatcmpl-${uuidv4()}`,
+      id: `chatcmpl-${crypto.randomUUID()}`,
       object: 'chat.completion.chunk',
       created: Math.floor(Date.now() / 1000),
       model,
@@ -275,7 +275,7 @@ function processSSEEvent(event, data, model, state) {
     if (parsed) {
       const pos = parsed.position || 0;
       chunks.push({
-        id: `chatcmpl-${uuidv4()}`,
+        id: `chatcmpl-${crypto.randomUUID()}`,
         object: 'chat.completion.chunk',
         created: Math.floor(Date.now() / 1000),
         model,
@@ -316,7 +316,7 @@ function processSSEEvent(event, data, model, state) {
     }
 
     chunks.push({
-      id: `chatcmpl-${uuidv4()}`,
+      id: `chatcmpl-${crypto.randomUUID()}`,
       object: 'chat.completion.chunk',
       created: Math.floor(Date.now() / 1000),
       model,
@@ -329,7 +329,7 @@ function processSSEEvent(event, data, model, state) {
     });
   } else if (event === 'done' && parsed) {
     chunks.push({
-      id: `chatcmpl-${uuidv4()}`,
+      id: `chatcmpl-${crypto.randomUUID()}`,
       object: 'chat.completion.chunk',
       created: Math.floor(Date.now() / 1000),
       model,

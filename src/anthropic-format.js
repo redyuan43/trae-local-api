@@ -9,7 +9,7 @@
  *   - token usage 估算
  */
 
-const { v4: uuidv4 } = require('uuid');
+const crypto = require('crypto');
 
 const OPEN_TAG = '<tool_call>';
 const CLOSE_TAG = '</tool_call>';
@@ -214,7 +214,7 @@ async function collectNonStreaming(fetchResponse, model, inputTokens) {
         } else if (block.type === 'tool_use') {
             content.push({
                 type: 'tool_use',
-                id: `toolu_${uuidv4().replace(/-/g, '')}`,
+                id: `toolu_${crypto.randomUUID().replace(/-/g, '')}`,
                 name: block.name,
                 input: block.input,
             });
@@ -230,7 +230,7 @@ async function collectNonStreaming(fetchResponse, model, inputTokens) {
     const outputTokens = estimateTokens(fullContent);
 
     return {
-        id: `msg_${uuidv4().replace(/-/g, '')}`,
+        id: `msg_${crypto.randomUUID().replace(/-/g, '')}`,
         type: 'message',
         role: 'assistant',
         content,
@@ -252,7 +252,7 @@ async function* streamGenerator(fetchResponse, model, inputTokens) {
     const reader = fetchResponse.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
-    const msgId = `msg_${uuidv4().replace(/-/g, '')}`;
+    const msgId = `msg_${crypto.randomUUID().replace(/-/g, '')}`;
     const parser = new StreamingToolCallParser();
 
     // 块状态
@@ -344,7 +344,7 @@ async function* streamGenerator(fetchResponse, model, inputTokens) {
                 // 关闭当前块(若有)
                 out += closeCurrentBlock();
                 // 开启 tool_use 块
-                const toolId = `toolu_${uuidv4().replace(/-/g, '')}`;
+                const toolId = `toolu_${crypto.randomUUID().replace(/-/g, '')}`;
                 out += startToolUseBlock(block.name, toolId);
                 // 输入 JSON 作为 input_json_delta
                 out += inputJsonDelta(JSON.stringify(block.input));
